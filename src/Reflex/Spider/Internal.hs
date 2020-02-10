@@ -241,10 +241,9 @@ subscribeAndRead = unEvent
 -- | Construct an 'Event' equivalent to that constructed by 'push', but with no
 -- caching; if the computation function is very cheap, this is (much) more
 -- efficient than 'push'
-{-# SCC pushCheap #-}
 {-# INLINE [1] pushCheap #-}
 pushCheap :: (a -> ComputeM x (Maybe b)) -> Event x a -> Event x b
-pushCheap !f e = Event $ \sub -> do
+pushCheap !f e = Event $ \sub -> {-# SCC "pushCheap" #-} do
   (subscription, occ) <- subscribeAndRead e $ sub
     { subscriberPropagate = \a -> do
         mb <- f a
@@ -662,7 +661,6 @@ behaviorHoldIdentity = behaviorHold
 behaviorConst :: a -> Behavior x a
 behaviorConst !a = Behavior $ return a
 
-{-# SCC behaviorPull #-}
 behaviorPull :: Pull x a -> Behavior x a
 behaviorPull !p = Behavior $ do
     val <- liftIO $ readIORef $ pullValue p
@@ -894,10 +892,9 @@ instance HasSpiderTimeline x => Defer (SomeResetCoincidence x) (EventM x) where
   getDeferralQueue = asksEventEnv eventEnvResetCoincidences
 
 -- Note: hold cannot examine its event until after the phase is over
-{-# SCC hold #-}
 {-# INLINE [1] hold #-}
 hold :: (Patch p, Defer (SomeHoldInit x) m) => PatchTarget p -> Event x p -> m (Hold x p)
-hold v0 e = do
+hold v0 e = {-# SCC "hold" #-} do
   valRef <- liftIO $ newIORef v0
   invsRef <- liftIO $ newIORef []
   parentRef <- liftIO $ newIORef Nothing
@@ -916,10 +913,10 @@ hold v0 e = do
   defer $ SomeHoldInit h
   return h
 
-{-# SCC getHoldEventSubscription #-}
+
 {-# INLINE getHoldEventSubscription #-}
 getHoldEventSubscription :: forall p x. (HasSpiderTimeline x, Patch p) => Hold x p -> EventM x (EventSubscription x)
-getHoldEventSubscription h = do
+getHoldEventSubscription h = {-# SCC "getHoldEventSubscription" #-} do
   ep <- liftIO $ readIORef $ holdParent h
   case ep of
     Just subd -> return subd
@@ -1207,15 +1204,13 @@ instance HasSpiderTimeline x => Functor (Event x) where
 instance Functor (Behavior x) where
   fmap f = pull . fmap f . readBehaviorTracked
 
-{-# SCC push #-}
 {-# INLINE push #-}
 push :: HasSpiderTimeline x => (a -> ComputeM x (Maybe b)) -> Event x a -> Event x b
-push f e = cacheEvent (pushCheap f e)
+push f e = {-# SCC "push" #-} cacheEvent (pushCheap f e)
 
-{-# SCC pull #-}
 {-# INLINABLE pull #-}
 pull :: BehaviorM x a -> Behavior x a
-pull a = behaviorPull $ Pull
+pull a = {-# SCC "pull" #-} behaviorPull $ Pull
   { pullCompute = a
   , pullValue = unsafeNewIORef a Nothing
 #ifdef DEBUG_NODEIDS
@@ -1223,10 +1218,9 @@ pull a = behaviorPull $ Pull
 #endif
   }
 
-{-# SCC switch #-}
 {-# INLINABLE switch #-}
 switch :: HasSpiderTimeline x => Behavior x (Event x a) -> Event x a
-switch a = eventSwitch $ Switch
+switch a = {-# SCC "switch" #-} eventSwitch $ Switch
   { switchParent = a
   , switchSubscribed = unsafeNewIORef a Nothing
   }
@@ -1709,20 +1703,17 @@ cleanupCoincidenceSubscribed subscribed = do
 subscribeCoincidenceSubscribed :: CoincidenceSubscribed x a -> Subscriber x a -> IO WeakBagTicket
 subscribeCoincidenceSubscribed subscribed sub = WeakBag.insert sub (coincidenceSubscribedSubscribers subscribed) (coincidenceSubscribedWeakSelf subscribed) cleanupCoincidenceSubscribed
 
-{-# SCC merge #-}
 {-# INLINE merge #-}
 merge :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMap k (Event x)) -> Event x (DMap k Identity)
-merge d = cacheEvent (mergeCheap d)
+merge d = {-# SCC "merge" #-} cacheEvent (mergeCheap d)
 
-{-# SCC mergeWithMove #-}
 {-# INLINE mergeWithMove #-}
 mergeWithMove :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMapWithMove k (Event x)) -> Event x (DMap k Identity)
-mergeWithMove d = cacheEvent (mergeCheapWithMove d)
+mergeWithMove d = {-# SCC "mergeWithMove" #-} cacheEvent (mergeCheapWithMove d)
 
-{-# SCC mergeCheap #-}
 {-# INLINE [1] mergeCheap #-}
 mergeCheap :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMap k (Event x)) -> Event x (DMap k Identity)
-mergeCheap = mergeCheap' getInitialSubscribers updateMe destroy
+mergeCheap = {-# SCC "mergeCheap" #-} mergeCheap' getInitialSubscribers updateMe destroy
   where
       updateMe :: MergeUpdateFunc k x (PatchDMap k (Event x)) (MergeSubscribedParent x)
       updateMe subscriber heightBagRef oldParents (PatchDMap p) = do
@@ -1901,10 +1892,9 @@ updateMerge m updateFunc p = SomeMergeUpdate updateMe (invalidateMergeHeight m) 
           liftIO $ writeIORef (_merge_parentsRef m) $! newParents
           return subscriptionsToKill
 
-{-# SCC mergeCheap' #-}
 {-# INLINE mergeCheap' #-}
 mergeCheap' :: forall k x p s. (HasSpiderTimeline x, GCompare k, PatchTarget p ~ DMap k (Event x)) => MergeInitFunc k x s -> MergeUpdateFunc k x p s -> MergeDestroyFunc k s -> Dynamic x p -> Event x (DMap k Identity)
-mergeCheap' getInitialSubscribers updateFunc destroy d = Event $ \sub -> do
+mergeCheap' getInitialSubscribers updateFunc destroy d = Event $ \sub -> {-# SCC "mergeCheap'" #-} do
   initialParents <- readBehaviorUntracked $ dynamicCurrent d
   accumRef <- liftIO $ newIORef $ error "merge: accumRef not yet initialized"
   heightRef <- liftIO $ newIORef $ error "merge: heightRef not yet initialized"
