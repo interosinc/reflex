@@ -57,7 +57,7 @@ listHoldWithKey
   -> Event t (Map k (Maybe v))
   -> (k -> v -> m a)
   -> m (Dynamic t (Map k a))
-listHoldWithKey m0 m' f = do
+listHoldWithKey m0 m' f = {-# SCC "listHoldWithKey" #-} do
   let dm0 = mapWithFunctorToDMap $ Map.mapWithKey f m0
       dm' = fmap
         (PatchDMap . mapWithFunctorToDMap . Map.mapWithKey
@@ -78,7 +78,7 @@ listWithKey
   => Dynamic t (Map k v)
   -> (k -> Dynamic t v -> m a)
   -> m (Dynamic t (Map k a))
-listWithKey vals mkChild = do
+listWithKey vals mkChild = {-# SCC "listWithKey" #-} do
   postBuild <- getPostBuild
   let childValChangedSelector = fanMap $ updated vals
 
@@ -105,7 +105,7 @@ listWithKey vals mkChild = do
               -- work
               , tag (current vals) postBuild
               ]
-  listHoldWithKey Map.empty changeVals $ \k v ->
+  listHoldWithKey Map.empty changeVals $ \k v -> {-# SCC "listWithKey.mkChild" #-}
     mkChild k =<< holdDyn v (select childValChangedSelector $ Const2 k)
 
 -- | Display the given map of items (in key order) using the builder
@@ -176,10 +176,10 @@ selectViewListWithKey
   -> m (Event t (k, a))
   -- ^ Event that fires when any child's return Event fires.  Contains
   -- key of an arbitrary firing widget.
-selectViewListWithKey selection vals mkChild = do
+selectViewListWithKey selection vals mkChild = {-# SCC "selectViewListWithKey" #-} do
   -- For good performance, this value must be shared across all children
   let selectionDemux = demux selection
-  selectChild <- listWithKey vals $ \k v -> do
+  selectChild <- listWithKey vals $ \k v -> {-# SCC "selectViewListWithKey.mkChild" #-} do
     let selected = demuxed selectionDemux k
     selectSelf <- mkChild k v selected
     return $ fmap ((,) k) selectSelf
