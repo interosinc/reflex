@@ -1503,7 +1503,7 @@ fanInt p =
     isEmpty <- liftIO $ FastMutableIntMap.isEmpty (_fanInt_subscribers self)
     when isEmpty $ do -- This is the first subscriber, so we need to subscribe to our input
       (subscription, parentOcc) <- subscribeAndRead p $ Subscriber
-        { subscriberPropagate = \m -> do
+        { subscriberPropagate = \m -> {-# SCC "fanInt.propogate" #-} do
             liftIO $ writeIORef (_fanInt_occRef self) m
             scheduleIntClear $ _fanInt_occRef self
             FastMutableIntMap.forIntersectionWithImmutable_ (_fanInt_subscribers self) m $ \b v -> do --TODO: Do we need to know that no subscribers are being added as we traverse?
@@ -1850,7 +1850,7 @@ scheduleMergeSelf m height = scheduleMerge' height (_merge_heightRef m) $ do
 
 mergeSubscriber :: forall x k s a. (HasSpiderTimeline x, GCompare k) => Merge x k s -> EventM x (k a) -> Subscriber x a
 mergeSubscriber m getKey = Subscriber
-  { subscriberPropagate = \a -> do
+  { subscriberPropagate = \a -> {-# SCC "mergeSubscriber.propogate" #-} do
       oldM <- liftIO $ readIORef $ _merge_accumRef m
       k <- getKey
       let newM = DMap.insertWith (error $ "Same key fired multiple times for Merge") k (Identity a) oldM
@@ -1947,7 +1947,7 @@ mergeInt = cacheEvent . mergeIntCheap
 
 {-# INLINABLE mergeIntCheap #-}
 mergeIntCheap :: forall x a. (HasSpiderTimeline x) => Dynamic x (PatchIntMap (Event x a)) -> Event x (IntMap a)
-mergeIntCheap d = Event $ \sub -> do
+mergeIntCheap d = Event $ \sub -> {-# SCC "mergeIntCheap" #-} do
   initialParents <- readBehaviorUntracked $ dynamicCurrent d
   accum <- liftIO $ FastMutableIntMap.newEmpty
   heightRef <- liftIO $ newIORef zeroHeight
