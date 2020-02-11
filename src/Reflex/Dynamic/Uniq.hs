@@ -55,7 +55,7 @@ fromUniqDynamic (UniqDynamic d) = unsafeDynamic (current d) e'
     -- value, unequal according to 'Eq', and nondeterministically equal or
     -- nonequal by pointer quality.  I suspect that it is impossible to make the
     -- behavior deterministic in this case.
-    superEq a b = a `unsafePtrEq` b || a == b
+    superEq a b = a `unsafePtrEq` b || ({-# SCC "fromUniqDyn.==" #-} a == b)
     e' = attachWithMaybe (\x x' -> if x' `superEq` x then Nothing else Just x') (current d) (updated d)
 
 -- | Create a UniqDynamic without uniqing it on creation.  This will be slightly
