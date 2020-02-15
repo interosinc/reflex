@@ -232,12 +232,6 @@ newtype Event x a = Event { unEvent :: Subscriber x a -> EventM x (EventSubscrip
 subscribeAndRead :: Event x a -> Subscriber x a -> EventM x (EventSubscription x, Maybe a)
 subscribeAndRead = unEvent
 
-{-# RULES
-"cacheEvent/cacheEvent" forall e. cacheEvent (cacheEvent e) = cacheEvent e
-"cacheEvent/pushCheap" forall f e. pushCheap f (cacheEvent e) = cacheEvent (pushCheap f e)
-"hold/cacheEvent" forall f e. hold f (cacheEvent e) = hold f e
-  #-}
-
 -- | Construct an 'Event' equivalent to that constructed by 'push', but with no
 -- caching; if the computation function is very cheap, this is (much) more
 -- efficient than 'push'
@@ -294,72 +288,6 @@ data CacheSubscribed x a
                      , _cacheSubscribed_parent :: {-# UNPACK #-} !(EventSubscription x)
                      , _cacheSubscribed_occurrence :: {-# UNPACK #-} !(IORef (Maybe a))
                      }
-
--- | Construct an 'Event' whose value is guaranteed not to be recomputed
--- repeatedly
---
---TODO: Try a caching strategy where we subscribe directly to the parent when
---there's only one subscriber, and then build our own FastWeakBag only when a second
---subscriber joins
-{-# NOINLINE [0] cacheEvent #-}
-cacheEvent :: forall x a. HasSpiderTimeline x => Event x a -> Event x a
-cacheEvent e =
-#ifdef DEBUG_TRACE_EVENTS
-  withStackOneLine $ \callSite -> Event $
-#else
-  Event $
-#endif
-    let mSubscribedRef :: IORef (FastWeak (CacheSubscribed x a))
-        !mSubscribedRef = unsafeNewIORef e emptyFastWeak
-    in \sub -> {-# SCC "cacheEvent" #-} do
-#ifdef DEBUG_TRACE_EVENTS
-          unless (BS8.null callSite) $ liftIO $ BS8.hPutStrLn stderr callSite
-#endif
-          subscribedTicket <- liftIO (readIORef mSubscribedRef >>= getFastWeakTicket) >>= \case
-            Just subscribedTicket -> return subscribedTicket
-            Nothing -> do
-              subscribers <- liftIO FastWeakBag.empty
-              occRef <- liftIO $ newIORef Nothing -- This should never be read prior to being set below
-              (parentSub, occ) <- subscribeAndRead e $ Subscriber
-                { subscriberPropagate = \a -> do
-                    liftIO $ writeIORef occRef $ Just a
-                    scheduleClear occRef
-                    propagateFast a subscribers
-                , subscriberInvalidateHeight = \old -> do
-                    FastWeakBag.traverse subscribers $ invalidateSubscriberHeight old
-                , subscriberRecalculateHeight = \new -> do
-                    FastWeakBag.traverse subscribers $ recalculateSubscriberHeight new
-                }
-              when (isJust occ) $ do
-                liftIO $ writeIORef occRef occ -- Set the initial value of occRef; we don't need to do this if occ is Nothing
-                scheduleClear occRef
-              let !subscribed = CacheSubscribed
-                    { _cacheSubscribed_subscribers = subscribers
-                    , _cacheSubscribed_parent = parentSub
-                    , _cacheSubscribed_occurrence = occRef
-                    }
-              subscribedTicket <- liftIO $ mkFastWeakTicket subscribed
-              liftIO $ writeIORef mSubscribedRef =<< getFastWeakTicketWeak subscribedTicket
-              return subscribedTicket
-          liftIO $ do
-            subscribed <- getFastWeakTicketValue subscribedTicket
-            ticket <- FastWeakBag.insert sub $ _cacheSubscribed_subscribers subscribed
-            occ <- readIORef $ _cacheSubscribed_occurrence subscribed
-            let es = EventSubscription
-                  { _eventSubscription_unsubscribe = do
-                      FastWeakBag.remove ticket
-                      isEmpty <- FastWeakBag.isEmpty $ _cacheSubscribed_subscribers subscribed
-                      when isEmpty $ do
-                        writeIORef mSubscribedRef emptyFastWeak
-                        unsubscribe $ _cacheSubscribed_parent subscribed
-                      touch ticket
-                      touch subscribedTicket
-                  , _eventSubscription_subscribed = EventSubscribed
-                      { eventSubscribedHeightRef = eventSubscribedHeightRef $ _eventSubscription_subscribed $ _cacheSubscribed_parent subscribed
-                      , eventSubscribedRetained = toAny subscribedTicket
-                      }
-                  }
-            return (es, occ)
 
 subscribe :: Event x a -> Subscriber x a -> EventM x (EventSubscription x)
 subscribe e s = fst <$> subscribeAndRead e s
@@ -1206,7 +1134,7 @@ instance Functor (Behavior x) where
 
 {-# INLINE push #-}
 push :: HasSpiderTimeline x => (a -> ComputeM x (Maybe b)) -> Event x a -> Event x b
-push f e = {-# SCC "push" #-} cacheEvent (pushCheap f e)
+push f e = {-# SCC "push" #-} (pushCheap f e)
 
 {-# INLINABLE pull #-}
 pull :: BehaviorM x a -> Behavior x a
@@ -1705,11 +1633,11 @@ subscribeCoincidenceSubscribed subscribed sub = WeakBag.insert sub (coincidenceS
 
 {-# INLINE merge #-}
 merge :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMap k (Event x)) -> Event x (DMap k Identity)
-merge d = {-# SCC "merge" #-} cacheEvent (mergeCheap d)
+merge d = {-# SCC "merge" #-} (mergeCheap d)
 
 {-# INLINE mergeWithMove #-}
 mergeWithMove :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMapWithMove k (Event x)) -> Event x (DMap k Identity)
-mergeWithMove d = {-# SCC "mergeWithMove" #-} cacheEvent (mergeCheapWithMove d)
+mergeWithMove d = {-# SCC "mergeWithMove" #-} (mergeCheapWithMove d)
 
 {-# INLINE [1] mergeCheap #-}
 mergeCheap :: forall k x. (HasSpiderTimeline x, GCompare k) => Dynamic x (PatchDMap k (Event x)) -> Event x (DMap k Identity)
@@ -1943,7 +1871,7 @@ mergeCheap' getInitialSubscribers updateFunc destroy d = Event $ \sub -> {-# SCC
          )
 
 mergeInt :: forall x a. (HasSpiderTimeline x) => Dynamic x (PatchIntMap (Event x a)) -> Event x (IntMap a)
-mergeInt = cacheEvent . mergeIntCheap
+mergeInt = mergeIntCheap
 
 {-# INLINABLE mergeIntCheap #-}
 mergeIntCheap :: forall x a. (HasSpiderTimeline x) => Dynamic x (PatchIntMap (Event x a)) -> Event x (IntMap a)
