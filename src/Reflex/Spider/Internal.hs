@@ -61,6 +61,7 @@ import Data.Kind (Type)
 import Data.Maybe hiding (mapMaybe)
 import Data.Monoid ((<>))
 import Data.Proxy
+import qualified Data.Text as Text
 import Data.These
 import Data.Traversable
 import Data.Witherable (Filterable, mapMaybe)
@@ -103,6 +104,8 @@ import qualified Reflex.Host.Class
 import Reflex.NotReady.Class
 import Reflex.Patch
 import qualified Reflex.Patch.DMapWithMove as PatchDMapWithMove
+
+import WTF
 
 #ifdef DEBUG_TRACE_EVENTS
 import qualified Data.ByteString.Char8 as BS8
@@ -252,7 +255,7 @@ pushCheap !f e = Event $ \sub -> do
   (subscription, occ) <- subscribeAndRead e $ sub
     { subscriberPropagate = \a -> do
         mb <- f a
-        mapM_ (subscriberPropagate sub) mb
+        mapM_ (subscriberPropagate sub) (instrThunk' "pushCheap.f" mb)
     }
   occ' <- join <$> mapM f occ
   return (subscription, occ')
@@ -2148,7 +2151,7 @@ clearEventEnv (EventEnv toAssignRef holdInitRef dynInitRef mergeUpdateRef mergeI
 
 -- | Run an event action outside of a frame
 runFrame :: forall x a. HasSpiderTimeline x => EventM x a -> SpiderHost x a --TODO: This function also needs to hold the mutex
-runFrame a = SpiderHost $ do
+runFrame a = SpiderHost $ instrM (Text.pack "Reflex.Spider.Internal.runFrame") $ do
   let env = _spiderTimeline_eventEnv $ unSTE (spiderTimeline :: SpiderTimelineEnv x)
   let go = do
         result <- a
@@ -2353,7 +2356,9 @@ instance HasSpiderTimeline x => Monad (Reflex.Class.Dynamic (SpiderTimeline x)) 
   {-# INLINE return #-}
   return = pure
   {-# INLINE (>>=) #-}
-  x >>= f = SpiderDynamic $ dynamicDynIdentity $ newJoinDyn $ newMapDyn (unSpiderDynamic . f) $ unSpiderDynamic x
+  x >>= f = SpiderDynamic $ dynamicDynIdentity $ newJoinDyn $ newMapDyn (unSpiderDynamic . f') $ unSpiderDynamic x
+    where
+      f' v = instrM (Text.pack "Reflex.Spider.Internal.Dynamic.>>=") (f v)
   {-# INLINE (>>) #-}
   (>>) = (*>)
   {-# INLINE fail #-}
@@ -2705,3 +2710,6 @@ instance MonadAtomicRef (SpiderHostFrame x) where
 instance PrimMonad (SpiderHostFrame x) where
   type PrimState (SpiderHostFrame x) = PrimState IO
   primitive = SpiderHostFrame . EventM . primitive
+
+instrThunk' :: String -> a -> a
+instrThunk' name v = instrThunk (Text.pack "Reflex.Spider.Internal." <> Text.pack name) v
